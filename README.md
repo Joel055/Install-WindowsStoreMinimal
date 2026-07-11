@@ -32,6 +32,7 @@ Get-Help Install-WindowsStoreMinimal -Full
 ## Notes
 - Requires administrative privileges.
 - For x64 Windows installations only.
+- May set the Microsoft Account Sign-in Assistant (wlidsvc) service to Manual if disabled.
 - rg-adguard.net is not affiliated with Microsoft.
 
 ## Licensing
