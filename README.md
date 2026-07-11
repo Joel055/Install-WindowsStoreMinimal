@@ -26,7 +26,7 @@ Install-WindowsStoreMinimal -IncludeWinget
 ```
 For full details, run:
 ```powershell
-Install-Get-Help Install-WindowsStoreMinimal -Full
+Get-Help Install-WindowsStoreMinimal -Full
 ```
 
 ## Notes
