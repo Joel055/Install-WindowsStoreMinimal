@@ -1,7 +1,10 @@
 # Install-WindowsStoreMinimal
 
-Installs the minimal Microsoft Store dependency set required for Microsoft Store and winget functionality, without installing the full Store app suite by
-resolving official Microsoft Store package download links via the rg-adguard.net API and then downloading/installing these.
+Installs the minimal Microsoft Store dependency set required for Microsoft Store and winget functionality, without installing the full Store app suite. by
+
+Optionally includes WinGet/App Installer support via ```-IncludeWinget.```
+
+The script resolves official Microsoft Store package download links via the rg-adguard.net API and then downloads and inställs these AppX/MSIC packages offline using ```Add-AppxPackage```
 
 Designed for LTSC, stripped, or otherwise modified Windows installations where the Microsoft Store dependency stack might be missing or broken.
 
@@ -17,10 +20,19 @@ Or download and run the script-file directly.
 ```powershell
 Install-WindowsStoreMinimal
 ```
+Include WinGet/App Installer support aswell:
+```powershell
+Install-WindowsStoreMinimal -IncludeWinget
+```
 For full details, run:
 ```powershell
 Install-Get-Help Install-WindowsStoreMinimal -Full
 ```
+
+## Notes
+- Requires administrative privileges.
+- For x64 Windows installations only.
+- rg-adguard.net is not affiliated with Microsoft.
 
 ## Licensing
 This project is released under the [MIT License](LICENSE).

@@ -1,21 +1,20 @@
 <#PSScriptInfo
-.VERSION 1.0.0
+.VERSION 1.0.1
 .GUID 94b0cf8f-12aa-4c53-ac47-ffff60587fe2
 .AUTHOR Joel055
 .TAGS WindowsStore MicrosoftStore AppX MSIX Restore
-.LICENSEURI https://github.com/Joel055/Install-WindowsStoreMinimal/blob/main/LICENSE
+.LICENSEURI https://github.com/Joel055/Install-WindowsStoreMinimal/blob/master/LICENSE
 .PROJECTURI https://github.com/Joel055/Install-WindowsStoreMinimal
-.RELEASENOTES Initial public release.
-.DESCRIPTION Installs the minimal latest Microsoft Store dependency set required for Store and winget functionality on Windows, without installing the full Store app suite. Resolves official Store packages via rg-adguard.net.
+.RELEASENOTES Hardened validation logic and made Winget optional
+.DESCRIPTION Installs the minimal latest Microsoft Store dependency set required for Store and optionally winget functionality on Windows, without installing the full Store app suite. Resolves official Store packages via rg-adguard.net.
 #>
 
 #Requires -RunAsAdministrator
 
 <#
 .SYNOPSIS
-Installs the minimal set of Microsoft Store dependencies required for
-Microsoft Store and winget functionality, without installing the full
-Store app suite.
+Installs the minimal set of Microsoft Store dependencies required for 
+Microsoft Store functionality, with optional WinGet/App Installer support.
 
 Resolves official Store packages via rg-adguard.net and installs them
 offline using Add-AppxPackage.
@@ -26,23 +25,27 @@ For x64 installations only.
 May set the Microsoft Account Sign-in Assistant (wlidsvc) service to Manual if disabled.
 rg-adguard.net is not affiliated with Microsoft and is used at your own risk.
 
-.PARAMETER Force
-Forces re-evaluation of Store dependencies even if Microsoft Store is already installed.
+.PARAMETER IncludeWinget
+Includes WinGet/App Installer support as well.
 
 .PARAMETER KeepDownloads
 Prevents deletion of downloaded package files (subsequent runs will reset the folder).
+
+.PARAMETER Force
+Bypasses the initial Store-installed check and queues packages even when the same version is already installed. Newer local package versions are still skipped.
 
 .EXAMPLE
 Install-WindowsStoreMinimal
 
 .EXAMPLE
-.\Install-WindowsStoreMinimal.ps1 -Force -KeepDownloads
+.\Install-WindowsStoreMinimal.ps1 -IncludeWinget -KeepDownloads
 #>
 
 [CmdletBinding()]
 param(
-    [switch]$Force,
-    [switch]$KeepDownloads
+    [switch]$IncludeWinget,
+    [switch]$KeepDownloads,
+    [switch]$Force
 )
 
 $bitsSvc      = "BITS"
@@ -51,6 +54,7 @@ $downloadPath = "$env:TEMP\WindowsStoreMinimal"
 
 $packageTable = @(
     [pscustomobject]@{
+        Target     = "Store"
         FamilyBase = "Microsoft.WindowsStore"
         Publisher  = "8wekyb3d8bbwe"
         IgnoreVer  = $false
@@ -59,35 +63,128 @@ $packageTable = @(
             "Microsoft\.UI\.Xaml\..*x64.*\.appx"
             "Microsoft\.NET\.Native\.Framework\..*x64.*\.appx"
             "Microsoft\.NET\.Native\.Runtime\..*x64.*\.appx"
-            "Microsoft\.WindowsStore.*neutral.*\.msixbundle"
+            "Microsoft\.WindowsStore.*neutral.*\.(appxbundle|msixbundle)"
         )
     }
-
+    
     [pscustomobject]@{
-        FamilyBase = "Microsoft.DesktopAppInstaller" 
-        Publisher  = "8wekyb3d8bbwe"
-        IgnoreVer  = $true # DesktopAppInstaller's bundle version always mismatches local install (manifest ver), skip version check
-        Patterns   = @("Microsoft\.DesktopAppInstaller.*neutral.*\.msixbundle")
-    }
-
-    [pscustomobject]@{
+        Target     = "Store"
         FamilyBase = "Microsoft.StorePurchaseApp"
         Publisher  = "8wekyb3d8bbwe"
         IgnoreVer  = $false
-        Patterns   = @("Microsoft\.StorePurchaseApp.*neutral.*\.appxbundle")
+        Patterns   = @("Microsoft\.StorePurchaseApp.*neutral.*\.(appxbundle|msixbundle)")
+    }
+
+    [pscustomobject]@{
+        Target     = "Winget"
+        FamilyBase = "Microsoft.WindowsAppRuntime.1.8"
+        Publisher  = "8wekyb3d8bbwe"
+        IgnoreVer  = $false
+        Patterns   = @("Microsoft\.WindowsAppRuntime\.1\.8.*(x64|neutral).*\.(appx|msix)")
+    }
+
+    [pscustomobject]@{
+        Target     = "Winget"
+        FamilyBase = "Microsoft.DesktopAppInstaller"
+        Publisher  = "8wekyb3d8bbwe"
+        IgnoreVer  = $true # DesktopAppInstaller's bundle version always mismatches local install (manifest ver), skip version check
+        Patterns   = @("Microsoft\.DesktopAppInstaller.*neutral.*\.(appxbundle|msixbundle)")
     }
 )
 
+$packageTable = $packageTable | Where-Object {
+    $_.Target -eq "Store" -or
+    ($IncludeWinget -and $_.Target -eq "Winget")
+}
+
+function Invoke-RgAdguardRequest {
+    param( 
+        $FamilyBase,
+        $Publisher
+    )
+
+    $baseUrl = "https://store.rg-adguard.net"
+    $apiUrl  = "$baseUrl/api/GetFiles"
+
+    $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+
+    $basicHeaders = @{
+        "User-Agent"                = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+        "Accept"                    = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        "Accept-Language"           = "en-US,en;q=0.9"
+        "Upgrade-Insecure-Requests" = "1"
+    }
+
+    try {
+        Invoke-WebRequest `
+            -Uri $baseUrl `
+            -Method GET `
+            -Headers $basicHeaders `
+            -WebSession $session `
+            -UseBasicParsing `
+            -ErrorAction Stop | Out-Null
+    }
+    catch [System.Net.WebException] {
+        throw "Cannot reach store.rg-adguard.net over HTTPS. Internet access, DNS, proxy, or firewall may be blocking the connection. Original error: $($_.Exception.Message)"
+    }
+    catch {
+        throw "Failed to open rg-adguard front page. Original error: $($_.Exception.Message)"
+    }
+
+    $postHeaders = @{
+        "User-Agent"       = $basicHeaders["User-Agent"]
+        "Accept"           = "*/*"
+        "Accept-Language"  = "en-US,en;q=0.9"
+        "Content-Type"     = "application/x-www-form-urlencoded; charset=UTF-8"
+        "X-Requested-With" = "XMLHttpRequest"
+        "Origin"           = $baseUrl
+        "Referer"          = "$baseUrl/"
+    }
+
+    $body = @{
+        type = "PackageFamilyName"
+        url  = "$($FamilyBase)_$($Publisher)"
+        ring = "Retail"
+        lang = "en-US"
+    }
+
+    try {
+        $response = Invoke-WebRequest `
+            -Uri $apiUrl `
+            -Method POST `
+            -Body $body `
+            -Headers $postHeaders `
+            -WebSession $session `
+            -UseBasicParsing `
+            -ErrorAction Stop
+    }
+    catch {
+        throw "Cannot reach store.rg-adguard.net over HTTPS. Internet access, DNS, proxy, or firewall may be blocking the connection. Original error: $($_.Exception.Message)"
+    }
+
+    if (
+        $response.Content -match 'Just a moment' -or
+        $response.Content -match 'Enable JavaScript and cookies' -or
+        $response.Content -match '/cdn-cgi/challenge-platform/' -or
+        $response.Content -match 'cf_chl' -or
+        $response.Content -match 'cf_clearance'
+    ) {
+        throw "rg-adguard returned a Cloudflare challenge instead of package metadata. The endpoint is currently blocking scripted access."
+    }
+
+    return $response
+}
+
 function Get-AdguardLinks {
-    param($PackageTable)
+    param(
+        $PackageTable
+    )
     
     $packageURLs = @()
 
     foreach ($pkg in $PackageTable) {
         Write-Host "Checking: $($pkg.FamilyBase)" -ForegroundColor Yellow
-        $url  = "https://store.rg-adguard.net/api/GetFiles"
-        $body = "type=PackageFamilyName&url=$($pkg.FamilyBase)_$($pkg.Publisher)&ring=Retail&lang=en-US"
-        $response = Invoke-WebRequest -Uri $url -Method POST -Body $body -UseBasicParsing -ErrorAction Stop
+        $response = Invoke-RgAdguardRequest -FamilyBase $pkg.FamilyBase -Publisher $pkg.Publisher
 
         foreach ($pattern in $pkg.Patterns) {
             $versions = $response.Links | 
@@ -102,6 +199,7 @@ function Get-AdguardLinks {
 
                         # Normalize version strings to a numeric value for comparison; Store package versions are inconsistent.
                         [long]$ver = $name -replace "[^0-9]", ""
+                        
                         [PSCustomObject]@{
                             Name         = $name
                             Architecture = $arch
@@ -126,17 +224,41 @@ function Get-AdguardLinks {
             Write-Host " Package : " -NoNewline
             Write-Host "$($latest.Name)" -ForegroundColor Cyan
 
+            $installed = $null
+            $local     = $null
+
             if ($pkg.IgnoreVer) {
-                $installed = Get-AppxPackage -AllUsers |
-                    Where-Object { $_.Name -eq $pkg.FamilyBase -and $_.Architecture -eq $latest.Architecture }
+                $local = Get-AppxPackage -AllUsers -Name $pkg.FamilyBase -ErrorAction SilentlyContinue |
+                    Select-Object -First 1
+
+                if ($local -and -not $Force) {
+                    $installed = $local
+                }
             }
             else {
-                $installed = (Get-AppxPackage -AllUsers |
-                    Where-Object { $_.PackageFullName -match "$($latest.Name)_(x64|neutral)" })
+                if ($latest.Name -match '^(?<PkgName>.+)_(?<PkgVer>\d+\.\d+\.\d+\.\d+)$') {
+                    $onlineName = $matches.PkgName
+                    $onlineVer  = [version]$matches.PkgVer
+
+                    $local = Get-AppxPackage -AllUsers -Name $onlineName -ErrorAction SilentlyContinue |
+                        Sort-Object @{ Expression = { [version]$_.Version } } -Descending |
+                        Select-Object -First 1
+
+                    if ($local) {
+                        $localVer = [version]$local.Version
+
+                        if (
+                            ($localVer -gt $onlineVer) -or
+                            ($localVer -eq $onlineVer -and -not $Force)
+                        ) {
+                            $installed = $local
+                        }
+                    }
+                }
             }
 
             if ($installed) {
-                Write-host " Already installed, skipping`n" -ForegroundColor DarkGray
+                Write-host " Already installed or newer, skipping`n" -ForegroundColor DarkGray
                 continue
             }
             else {
@@ -150,18 +272,39 @@ function Get-AdguardLinks {
     $packageURLs
 }
 
-$isInstalled = Get-AppxPackage -AllUsers -Name "Microsoft.WindowsStore" -ErrorAction SilentlyContinue
+function Test-PackageSignature {
+    param(
+        $Path
+    )
 
-if ($isInstalled -and -not $Force) {
-    Write-Warning "Microsoft Store is already installed. Use -Force to run anyway."
-    return
+    $sig = Get-AuthenticodeSignature -LiteralPath $Path
+
+    if ($sig.Status -ne "Valid") {
+        throw "Invalid signature on '$Path'. Status: $($sig.Status)"
+    }
+
+    $expectedSubject = "CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US"
+
+    if ($sig.SignerCertificate.Subject -ne $expectedSubject) {
+        throw "Unexpected signer on '$Path'. Signer: $($sig.SignerCertificate.Subject)"
+    }
 }
 
-try {
-    Invoke-WebRequest -Uri "https://store.rg-adguard.net" -Method Head -TimeoutSec 5 -ErrorAction Stop | Out-Null
-}
-catch {
-    throw "Cannot reach store.rg-adguard.net over HTTPS. Internet access, DNS, proxy, or firewall may be blocking the connection."
+
+# Avoid running the script unnecessarily
+$isStoreInstalled = Get-AppxPackage -AllUsers -Name "Microsoft.WindowsStore" -ErrorAction SilentlyContinue
+$isWingetInstalled = Get-AppxPackage -AllUsers -Name "Microsoft.DesktopAppInstaller" -ErrorAction SilentlyContinue
+
+if (-not $Force) {
+    if (-not $IncludeWinget -and $isStoreInstalled) {
+        Write-Warning "Microsoft Store is already installed. Use -Force to re-check packages and reinstall matching versions."
+        return
+    }
+
+    if ($IncludeWinget -and $isStoreInstalled -and $isWingetInstalled) {
+        Write-Warning "Microsoft Store and WinGet/App Installer are already installed. Use -Force to re-check packages and reinstall matching versions."
+        return
+    }
 }
 
 if ((Get-Service -Name $bitsSvc).StartType -eq "Disabled") {
@@ -196,6 +339,9 @@ foreach ($pkt in $packages) {
 
     Write-Host " Downloading..." -ForegroundColor Cyan
     Start-BitsTransfer -Source $pkt.URL -Destination $outFile -ErrorAction Stop
+
+    Write-Host " Verifying signature..." -ForegroundColor Cyan
+    Test-PackageSignature -Path $outFile
 
     Write-Host " Installing...`n" -ForegroundColor Cyan
     Add-AppxPackage -Path $outFile -ForceApplicationShutdown -ErrorAction Stop 
