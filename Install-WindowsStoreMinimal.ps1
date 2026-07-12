@@ -5,7 +5,13 @@
 .TAGS WindowsStore MicrosoftStore AppX MSIX Restore
 .LICENSEURI https://github.com/Joel055/Install-WindowsStoreMinimal/blob/master/LICENSE
 .PROJECTURI https://github.com/Joel055/Install-WindowsStoreMinimal
-.RELEASENOTES Hardened validation logic and made Winget optional
+.RELEASENOTES 
+- Added browser-like rg-adguard request handling to reduce Cloudflare/API blocking issues.
+- Added Microsoft package signature validation before installation.
+- Added optional Winget/App Installer support via -IncludeWinget.
+- Added Microsoft.WindowsAppRuntime.1.8 dependency for newer App Installer versions.
+- Improved installed-version checks to avoid installing older packages if the local version is somehow newer.
+- Broadened package matching for AppX/MSIX bundle changes.
 .DESCRIPTION Installs the minimal latest Microsoft Store dependency set required for Store and optionally winget functionality on Windows, without installing the full Store app suite. Resolves official Store packages via rg-adguard.net.
 #>
 
